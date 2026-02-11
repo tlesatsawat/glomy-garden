@@ -1,0 +1,182 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  CROP_SALE
+  SEED_PURCHASE
+  MARKET_BUY
+  MARKET_SELL
+  EVENT_REWARD
+}
+
+enum SlotStatus {
+  LOCKED
+  EMPTY
+  PLANTED
+  WITHERED
+}
+
+enum AIState {
+  IDLE
+  WORKING
+  RESTING
+  WALKING
+}
+
+// Core User Models
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique
+  email         String?   // Optional for guest mode -> upgrade
+  passwordHash  String?   // Nullable for guest/web3 auth
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime  @default(now())
+
+  wallet        Wallet?
+  farmSlots     FarmSlot[]
+  aiAgents      AIInstance[]
+  marketListings MarketListing[]
+  
+  @@index([username])
+}
+
+model Wallet {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gold          Int       @default(100)
+  gems          Int       @default(0)
+  updatedAt     DateTime  @updatedAt
+  
+  transactions  TransactionLog[]
+}
+
+// Farm & Crop System
+model FarmSlot {
+  id            String        @id @default(uuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gridIndex     Int           // 0-N linear index mapped to 2D grid client-side
+  status        SlotStatus    @default(LOCKED)
+  
+  crop          CropInstance?
+
+  @@unique([userId, gridIndex]) // Prevent duplicate slots per user
+  @@index([userId])
+}
+
+model CropMaster {
+  id            String    @id @default(uuid())
+  name          String    @unique
+  description   String?
+  growthTime    Int       // Seconds to fully grow
+  buyPrice      Int
+  sellPrice     Int
+  experience    Int       @default(10)
+  
+  // Visual Assets
+  emoji         String    // Fallback/Emoji Mode
+  spriteUrl     String?   // Sprite Mode
+  frameConfig   Json?     // { "seed": 0, "sprout": 1, "ripe": 2 }
+  
+  instances     CropInstance[]
+}
+
+model CropInstance {
+  id            String      @id @default(uuid())
+  farmSlotId    String      @unique
+  farmSlot      FarmSlot    @relation(fields: [farmSlotId], references: [id], onDelete: Cascade)
+  
+  masterId      String
+  master        CropMaster  @relation(fields: [masterId], references: [id])
+  
+  plantedAt     DateTime    @default(now())
+  harvestableAt DateTime
+  isWithered    Boolean     @default(false)
+  
+  @@index([farmSlotId])
+}
+
+// AI Worker System
+model AIMaster {
+  id            String    @id @default(uuid())
+  name          String
+  role          String    // e.g., "FARMER", "GUARD"
+  cost          Int
+  speed         Float
+  efficiency    Float
+  
+  instances     AIInstance[]
+}
+
+model AIInstance {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  masterId      String
+  master        AIMaster  @relation(fields: [masterId], references: [id])
+  
+  currentState  AIState   @default(IDLE)
+  currentX      Int       @default(0)
+  currentY      Int       @default(0)
+  energy        Int       @default(100)
+  
+  lastUpdateAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// Economy & Events
+model Event {
+  id            String    @id @default(uuid())
+  name          String
+  startTime     DateTime
+  endTime       DateTime
+  config        Json      // { "growthMultiplier": 2.0, "goldMultiplier": 1.5 }
+  isActive      Boolean   @default(true)
+}
+
+model MarketListing {
+  id            String    @id @default(uuid())
+  sellerId      String
+  seller        User      @relation(fields: [sellerId], references: [id])
+  
+  itemId        String    // Could refer to CropMaster ID or Item ID
+  itemType      String    // "CROP", "SEED", "DECOR"
+  quantity      Int
+  pricePerUnit  Int
+  
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime?
+  
+  @@index([itemType])
+}
+
+model TransactionLog {
+  id            String          @id @default(uuid())
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id])
+  
+  type          TransactionType
+  amount        Int             // Positive for deposit, Negative for spend
+  currency      String          @default("GOLD") // GOLD or GEM
+  metadata      Json?           // Context: { "cropId": "...", "slotId": "..." }
+  
+  createdAt     DateTime        @default(now())
+  
+  @@index([walletId])
+}
